@@ -401,7 +401,7 @@ Wo der Quelltext dem Plan widerspricht, **gilt der Quelltext**.
 
 **Gesicherter Quelltext:** `docs/reference/` — 40 Dateien, read-only kopiert am 2026-09-26:
 ```
-ssh akwa@10.0.0.10 'for f in $(docker exec echomuse-controller ls /app | grep "\.py$"); do
+ssh user@<ha-host> 'for f in $(docker exec echomuse-controller ls /app | grep "\.py$"); do
     docker exec echomuse-controller cat /app/$f; done'   # → docs/reference/
 ```
 Kern-Dateien: `em_controller.py` (224 KB, WebSocket-Server, OWW-Loop, Button, Keepalive), `em_esphome.py` (160 KB, Turn-State-Machine, Preroll, VAD-Stream), `em_db.py` (118 KB, 43 Config-Defaults), `em_api.py` (207 KB, HTTP-API/Dashboard), `em_oww_warmup.py` (Warm-up-Gate), `em_oww_models.py` (Modell-Discovery), `em_ns.py` (DTLN-NS), `em_shadow.py` (Shadow-Modus), `em_scenes.py` (LED-Scenes/Anim-Specs), `em_turnclock.py` (No-Speech-Logik), `em_button.py` (Button-Politik), `em_player.py` (Musik-Plane), `em_volume.py` (Lautstärken-Skala), `em_wsclose.py`, `version.py`.

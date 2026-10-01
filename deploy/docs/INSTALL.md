@@ -111,7 +111,7 @@ git-Remote), ersetzt **rsync** das `git clone` — vom Arbeitsrechner aus:
 rsync -a --exclude .git --exclude .env --exclude .env.test \
       --exclude WLAN_CONNECT.md --exclude docs/reference \
       --exclude __pycache__ --exclude reports \
-      /home/akwa/Projects/EVA/ root@<ziel-host>:/opt/eva-src/
+      ./ root@<ziel-host>:/opt/eva-src/
 cd /opt/eva-src && sudo ./deploy/install.sh
 ```
 
