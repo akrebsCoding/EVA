@@ -1,0 +1,342 @@
+# wyoming-manager – Compose-Stack (PLAN.md §7, Schritt P1.T3)
+#
+# AUFBAUM
+#   Drei Services: `wyoming-manager` (Build, verantwortet den Stack),
+#   `wyoming-whisper` + `wyoming-piper` (Wyoming-STT/TTS, PLAN §7/P6.T3).
+#   P1.T3 hatte den Stack probeweise mit **nur** dem Manager gestartet
+#   (Runtime-Smoke, `No module named app.main`); P6.T3 ergänzt Whisper/Piper
+#   mit denselben Images/Args/Ports wie der Altstack (STATE.md §3/P6.T0).
+#   Alle drei laufen im Host-Netz (PLAN §3 „Netzwerk: host für mDNS").
+#
+# ZIELHOST
+#   10.0.0.10 (Arch Linux), innerhalb des bestehenden Compose-Umfelds
+#   (dort laufen bereits HA, sysreptor, wyoming-piper). Planbindend: der neue
+#   Manager wird in EINEM eigenen Compose-Projekt deployt, damit P6.T1/P6.T2
+#   den Altstack getrennt stoppen und zurückrollen können.
+#
+# SECRETS
+#   Ausschließlich `env_file: .env` (PLAN §2.3/§4). Kein Secret steht in dieser
+#   Datei, kein Wert wird hier dupliziert. `environment:` enthält nur
+#   Betriebs-Defaults OHNE Secret, die NICHT in `.env.example` stehen –
+#   insbesondere wird hier bewusst KEIN `ENABLE_TEST_HOOKS`/`RUN_LIVE`/
+#   `HA_TOKEN`/`LLM_API_KEY` gesetzt: `environment:` hat Vorrang vor `env_file:`
+#   und würde den Wert aus `.env` überschreiben (P9.T7 braucht ein
+#   `ENABLE_TEST_HOOKS=true` aus `.env`).
+
+name: wyoming-manager
+
+services:
+  wyoming-manager:
+    # Lokaler Build aus dem Repo (P1.T2: `Dockerfile` ist zweistufig, non-root,
+    # `CMD python -m app.main`, `EXPOSE 8767`, `STOPSIGNAL SIGTERM`).
+    # Der Tag sorgt dafür, dass `docker compose up --build` und ein manuelles
+    # `docker run` dasselbe Image treffen.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wyoming-manager:latest
+
+    # Fester Name wie im Altstack (`echomuse-controller`, `wyoming-piper`) –
+    # erleichtert `docker logs`/`docker inspect` in P6/P8.
+    container_name: wyoming-manager
+
+    # ── Netzwerk: host (Pflicht, PLAN §3) ────────────────────────────────
+    # Der Echo Dot findet den Manager über das mDNS-Announcement
+    # `_emcontroller._tcp.local` (P5.T3) und dialt danach `ws://<ip>:8767`.
+    # Beides funktioniert nur, wenn der Container im Host-Netz hängt: im
+    # Bridge-Netz verlässt das Announcement das eigene Subnetz nicht und der
+    # veröffentlichte Port wäre nicht der des Managers.
+    network_mode: host
+    # KONSEQUENZ (P8.D2, geprüft/aktualisiert): Port 8767 wird deshalb **auch
+    # für das Dashboard** NICHT per `ports:` gemappt – es **muss** nicht.
+    #
+    # 1) LAN-Zugriff ist bereits erfüllt. Bei host-Netzwerk bindet der Manager
+    #    direkt auf 0.0.0.0:8767 des Hosts (`MANAGER_HOST=0.0.0.0`,
+    #    `MANAGER_PORT=8767`, PLAN §4). Verifiziert auf `.123`: `ss -ltn` zeigt
+    #    `0.0.0.0:8767` als **Host**-Listener, und `curl
+    #    http://10.0.0.10:8767/health` liefert aus dem LAN 200. Das
+    #    Dashboard ist damit genau so erreichbar wie gewünscht:
+    #    `http://10.0.0.10:8767/dashboard` – ohne jede Port-Änderung.
+    # 2) Ein `ports:`-Block wäre wirkungslos. Compose verwirft ihn im
+    #    host-Netzwerk ausdrücklich (verifiziert mit Compose 2.40.3 auf einem
+    #    Wegwerf-Container: `Published ports are discarded when using host
+    #    network mode`). Er würde also **nur** bei jedem `up` eine
+    #    irreführende Warnung erzeugen und sonst nichts bewirken.
+    # 3) `EXPOSE 8767` im Dockerfile bleibt rein dokumentarisch.
+    #
+    # ⚠ Erledigt seit P6.T1 (STATE.md §3/P6): der Alt-Controller
+    #   `echomuse-controller`, der :8767 ebenfalls hielt, ist gestoppt. Der
+    #   Port gehört jetzt allein dem Manager.
+
+    # ── Konfiguration ────────────────────────────────────────────────────
+    # `.env` ist git-ignoriert (`.gitignore:2`) und enthält die Secrets
+    # (`HA_TOKEN`, `LLM_API_KEY`; E18/E20). Sie wird in **P6.T3** mit
+    # `chmod 600` angelegt bzw. dann durch die echte Datei ersetzt.
+    #
+    # Stand P1.T3 (verifiziert): Es existiert bereits eine **minimale
+    # `.env`-Gerüstdatei mit genau EINER Zeile** `MANAGER_PORT=8767` (18 B,
+    # **kein Secret**). Sie wurde angelegt, damit `docker compose config`
+    # überhaupt auflösen kann, und sie ändert **nichts**: 8767 ist exakt der
+    # Default in `app/config.py:94` (`manager_port: int = Field(default=8767,
+    # …)`). Sie bleibt deshalb als Gerüst stehen, wird aber in P6.T3 ersetzt.
+    #
+    # ⚠ FEHLERWEG BEACHTEN: `environment:` hat **Vorrang vor `env_file:`**.
+    #   Würde ein Wert doppelt genannt, gewinnt der Compose-Block und der
+    #   `.env`-Wert wäre still tot. Deshalb stehen hier **ausschließlich**
+    #   `TZ` und bewusst **keine** `.env`-Schlüssel (kein
+    #   `ENABLE_TEST_HOOKS`/`RUN_LIVE`/`HA_TOKEN`/`LLM_API_KEY`) — P9.T7
+    #   braucht ein `ENABLE_TEST_HOOKS=true` aus `.env`.
+    # Fehlt `.env` ganz, bricht `docker compose config`/`up` bewusst hart ab
+    # (fail-fast, in P1.T3 verifiziert: rc=1 + `env file … not found`), statt
+    # einen Manager ohne HA-Token/LLM-Key zu starten.
+    env_file:
+      - .env
+    # Nur Betriebs-Defaults ohne Secret; `TZ` ist in `.env.example` nicht
+    # enthalten (verifiziert: alle 53 Beispiel-Keys ohne TZ). Host ist
+    # Europe/Berlin, Zoneinfo liegt im Image (`/usr/share/zoneinfo/Europe/Berlin`
+    # in P1.T3 geprüft). Locale Läufezeitzone-Anzeige/Log-Zeitstempel stimmen
+    # damit mit dem Host überein.
+    #
+    # E96 (P9.T1) – `DASHBOARD_WRITE_ENABLED`: **aus** ⇒ der einzige
+    # Schreibpfad (`POST /api/config/oww-threshold`) antwortet 403, das
+    # Frontend blendet den Tuner aus. Als **Variable mit Default** gesetzt, nicht
+    # als fester Wert: `environment:` hat Vorrang vor `env_file:`, ein festes
+    # `false` würde ein `DASHBOARD_WRITE_ENABLED=true` aus `.env` also still
+    # totschlagen. Mit `${…:-false}` gewinnt die `.env`, wenn sie es explizit
+    # sagt, und ohne `.env`-Wert bleibt es aus.
+    environment:
+      TZ: Europe/Berlin
+      DASHBOARD_WRITE_ENABLED: ${DASHBOARD_WRITE_ENABLED:-false}
+
+    # Reboot-Stabilität ist DoD (PLAN §11.7).
+    restart: unless-stopped
+
+    # Sauberes Herunterfahren: uvicorn bekommt SIGTERM (STOPSIGNAL im
+    # Dockerfile) und muss OWW-Modell, HA-Client und mDNS freigeben. Der
+    # Docker-Default von 10 s reicht bei einem belegten Turn nicht zwingend –
+    # ein Turn ist auf 15 s hart gecappt (K5), das Herunterfahren läuft aber
+    # parallel dazu. 30 s ≈ doppelte Turn-Cap-Zeit.
+    stop_grace_period: 30s
+
+    # ── Speicherlimit (E22) ──────────────────────────────────────────────
+    # Lehre aus P0.T4: der Alt-Whisper lief mit `MemLimit=0` und starb
+    # undurchschaubar (Exited 137). E22 verlangt explizite Limits, damit ein
+    # OOM lokalisierbar ist und nicht den Host trifft.
+    #
+    # ⚠ PLAN-ABWEICHUNG, bewusst (P1.T3): E22 setzt die Limits erst in P6.T3
+    #   an. Hier steht der Manager-Wert schon jetzt, damit er früh sichtbar
+    #   und reviewbar ist und nicht erst unter Deploy-Druck gesetzt wird.
+    #
+    # ⚠ PROVISORISCH, nicht gemessen: 512 MiB liegt über dem Plan-Bedarf
+    #   "Manager 350–450 MiB" (§7/P6.T2) — der Puffer ist also nur ~14 %
+    #   über der oberen Schätzung. E21 warnt ausdrücklich: ein zu kleiner Wert
+    #   killt den Manager selbst (`.123`: 3321 MiB total, nur 344 MiB
+    #   verfügbar, Defizit ~430–720 MiB). Der reale Bedarf ist in P1.T3
+    #   **nicht** messbar (app/main.py fehlt bis P5.T4) und wird hier
+    #   **bewusst nicht erfunden**.
+    #   MESSAUFTRAG: `docker stats` für den echten Manager in **P6.T4**
+    #   (bzw. P1.T5 für den OWW-Teil) ⇒ Wert danach bestätigen oder anpassen.
+    #   Zeigt P6.T4 Druck, ist 512m die **erste** Stellschraube.
+    # Ein Limit reserviert keinen RAM, es begrenzt nur.
+    mem_limit: 512m
+    # Bewusst NICHT gesetzt: memswap_limit / cpus.
+    #  – `mem_limit` ist auf **beiden** cgroup-Varianten gültig: v2
+    #    `memory.max` (dieser Host ist cgroup2fs, `stat -fc %T /sys/fs/cgroup/`
+    #    = `cgroup2fs`), v1 `memory.limit_in_bytes` (Zielhost `.123`).
+    #  – `memswap_limit` steht hier **nicht**, aber das heißt NICHT "kein
+    #    Swap-Limit": Docker setzt bei gesetztem `--memory` **automatisch
+    #    memory+swap = 2× memory**. In P1.T3 gemessen: `MemorySwap=1073741824`
+    #    (= 1 GiB) bei `Memory=536870912`; die cgroup-v2-Datei
+    #    `memory.swap.max` = 536870912 ⇒ 512 MiB RAM **plus** 512 MiB Swap.
+    #    Explizit gesetzt wird es trotzdem nicht, weil auf **cgroup v1**
+    #    (Zielhost `.123`) dieses 2×-Default das aktivierbare
+    #    `memory.memsw.limit_in_bytes` je cgroup braucht und sonst nur
+    #    warnt. ⇒ **Offener Prüfpunkt für P6.T3:** taucht auf `.123` eine
+    #    memsw-Warnung auf, wird `memswap_limit: -1` (Swap unbeschränkt) oder
+    #    ein eigener Wert gesetzt — der erst P6.T4 nach `docker stats` feststeht.
+    #  – `cpus` (cpu.cfs_quota) wird erst gestellt, wenn der OWW-CPU-Bedarf
+    #    gemessen ist: **P1.T5** (Inferenzzeit je 80-ms-Chunk) und
+    #    **P6.T4** (Last im Betrieb). Vorher würde ein Wert geraten.
+
+    # ── Healthcheck (E33 verschärft in P5.T4) ────────────────────────────
+    # Strategie: zweistufig (P1.T3) und seit P5.T4 **verschärft**, weil mit
+    # `app/main.py` (P5.T4) und dem WS-Server (P5.T1/P5.T2) die Probe nun
+    # belastbar ist (Auflösung der in E33 offengehaltenen Entscheidung):
+    #   1) PID 1 ist der Manager (`python -m app.main`, Dockerfile-CMD).
+    #   2) Listener auf MANAGER_PORT **muss** existieren ⇒ fehlt er, ist der
+    #      Prozess zwar lebendig, aber der Server läuft nicht → **Fehlschlag**
+    #      (vorher „pending", jetzt ein echtes Loch, s. E33).
+    #   3) /health **muss** 200 liefern. 404 ist kein „noch nicht geroutet"
+    #      mehr (die Route existiert seit P5.T4), sondern **Fehlschlag**;
+    #      Timeout/5xx ⇒ Fehlschlag.
+    # Kein `curl` im Image (P1.T2) – deshalb der stdlib-Python-Check; `python`
+    # stammt aus dem venv-PATH des Dockerfile-ENV (verifiziert:
+    # `/opt/venv/bin/python`, 3.11.16).
+    #
+    # Historie der Exit-Codes (P1.T3, an **7 frischen Containern** verifiziert,
+    # s. STATE.md §3/„Compose-Stack"): PID1 ohne `app.main` → 1 · `app/main.py`
+    # + kein Listener → **0**· `/health` 404 → **0**· `/health` 200 → 0 ·
+    # `/health` 500 → 1 · Listener nimmt an, antwortet nie → 1 (Timeout) ·
+    # PID1 mit `app/main.py` → 0. **P5.T4 hat die beiden „pending"-Zweige
+    # (kein Listener, 404) zu Fehlschlägen gedreht** – die P1.T3-Belege oben
+    # bleiben als Ausgangsstand dokumentiert, sind aber nicht mehr die gültige
+    # Erwartung.
+    #
+    # ⚠ BEKANNTER BLINDFLECK (unverändert, P1.T3): EIN `entrypoint:`-Wrapper in
+    #   `/bin/sh` (statt `exec`) macht PID 1 zum Wrapper ⇒ Stufe 1 meldet
+    #   fälschlich `unhealthy`, obwohl der Manager läuft. Wer später
+    #   `entrypoint:`/`command:` in Compose überschreibt, MUSS Stufe 1
+    #   nachziehen. `command:` überschreiben ist unkritisch (PID 1 bleibt der
+    #   `python`-Prozess, nur mit anderen Argumenten).
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import os, socket, sys, urllib.request
+
+          # (1) PID 1 ist der Manager. Image-CMD ist `python -m app.main`
+          #     (verifiziert: Config.Cmd = ['python','-m','app.main'], **kein**
+          #     ENTRYPOINT ⇒ PID 1 ist genau dieser python-Prozess).
+          #     `app/main.py` wird mitakzeptiert, weil P5.T4 den Start auch als
+          #     `python app/main.py` wählen könnte; `uvicorn app.main:app`
+          #     enthält `app.main` bereits von selbst.
+          try:
+              with open("/proc/1/cmdline", "rb") as fh:
+                  cmdline = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+          except OSError:
+              cmdline = ""
+          if "app.main" not in cmdline and "app/main.py" not in cmdline:
+              sys.exit(1)
+
+          port = int(os.environ.get("MANAGER_PORT", "8767"))
+
+          # (2) WS-Server MUSS lauschen (P5.T4: existiert jetzt ⇒ ohne Listener
+          #     ist der Prozess lebendig, aber der Server tot ⇒ Fehlschlag).
+          try:
+              socket.create_connection(("127.0.0.1", port), timeout=2.0).close()
+          except OSError:
+              sys.exit(1)
+
+          # (3) /health MUSS 200 liefern (P5.T4: Route existiert; 404 und
+          #     Timeout/5xx sind echte Fehler, kein "pending" mehr).
+          try:
+              with urllib.request.urlopen(
+                  "http://127.0.0.1:%d/health" % port, timeout=2.0
+              ) as resp:
+                  sys.exit(0 if resp.status == 200 else 1)
+          except Exception:
+              sys.exit(1)
+      # Worst case im Skript: 2 s (Connect) + 2 s (urlopen) ≈ 4 s, in P1.T3
+      # mit 3 978 ms **gemessen** — passt unter `timeout: 5s`, aber mit nur
+      # ~1 s Reserve. Bei 5 s hart übergangen würde Docker den Probe-Prozess
+      # killen; das Ergebnis wäre zwar auch "Fehlschlag", die Diagnose aber
+      # schlechter. `retries: 3` ⇒ ab ~120 s nach Start `unhealthy`.
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Startzeit zählt nicht als Fehlschlag: Modell-Laden (Modell ist seit
+      # P1.T2/E30 **baked in**, kein Download) + mDNS-Announcement beim Boot.
+      # 60 s ist dafür reichlich; schadet nicht, weil `unhealthy` den
+      # Neustart **nicht** auslöst (`restart: unless-stopped` hängt nur an
+      # Prozessende/Neustart-Richtlinie, nicht am Health-Status).
+      start_period: 60s
+
+    # ── Logs ─────────────────────────────────────────────────────────────
+    # Ohne Rotation wachsen JSON-Logs auf dem RAM-engen Host unbegrenzt
+    # weiter (PLAN §9/.123). ~30 MiB Deckel je Container.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # ── Härtung ──────────────────────────────────────────────────────────
+    # `no-new-privileges` verhindert, dass ein Prozess über setuid-Binaries
+    # Rechte gewinnt. Passt zum non-root-`appuser` (1001, P1.T2) als
+    # Defense-in-Depth: der Container braucht ohnehin keine Privilege-
+    # Eskalation, also kostet die Option nichts. Vom Daemon akzeptiert
+    # (P1.T3-Runtime-Smoke: `SecurityOpt=['no-new-privileges:true']`,
+    # `Privileged=false`).
+    security_opt:
+      - no-new-privileges:true
+
+  # ══════════════════════════════════════════════════════════════════════════
+  #  Wyoming-STT/TTS (P6.T3) — gleiche Images/Args/Ports wie der Altstack.
+  #  Quelle: STATE.md §3 „Rollback-Basis .123 (P6.T0)" + „Piper (P0.T3)".
+  #  Kein Build: beide Images existieren lokal auf .123 (siehe P6.T0/P6.T1).
+  # ══════════════════════════════════════════════════════════════════════════
+  wyoming-whisper:
+    # Altstack-Image `rhasspy/wyoming-whisper:latest` (ImageID 013de9d3…,
+    # 1.6 GB, in P6.T1 bewusst NICHT gelöscht). Kein `build:` ⇒ Compose zieht
+    # das vorhandene Image.
+    image: rhasspy/wyoming-whisper:latest
+
+    # Altstack-Args waren `--model small --language de`. Kleine, E2-konforme
+    # Abweichung: Whisper `small` (461 MiB Modell) hat den Alt-Container per
+    # OOM gekillt (P0.T4). E2/PLAN §4 verlangt `base` int8 ⇒ `--model base`.
+    command: ["--model", "base", "--language", "de"]
+
+    # ── Netzwerk: host (Begründung wie beim Manager) ─────────────────────
+    # Der Manager läuft selbst im Host-Netz und spricht Whisper über
+    # `WHISPER_HOST=127.0.0.1:10300` an. Im Bridge-Netz müsste der Manager
+    # dafür den veröffentlichten Host-Port (docker-proxy) treffen — der
+    # Altstack tat genau das (`-p 10300:10300`). Host-Netz entfernt diesen
+    # Proxy-Hop, bindet :10300 direkt durch den Dienst und ist konsistent
+    # mit PLAN §3 („Netzwerk: host für mDNS"). Ports 10200/10300 sind nach
+    # P6.T1 frei.
+    network_mode: host
+    # ⚠ Kein `container_name` — der gestoppte Alt-Container `wyoming-piper`
+    #   (Restart-Policy `no`) existiert noch und dient dem Rollback
+    #   (STATE.md §3/P6.T1). Ein fester Name würde beim `up` kollidieren.
+    #   Compose vergibt daher `wyoming-manager-wyoming-whisper-1`.
+
+    # HF-Cache des Altstacks (enthält u. a. das `small`-Modell); das
+    # `base`-Modell wird beim ersten Start zusätzlich geladen.
+    volumes:
+      - /home/akwa/wyoming-whisper:/data
+
+    restart: unless-stopped
+
+    # ── Speicherlimit (E22, kein `MemLimit=0` mehr) ──────────────────────
+    # P0.T4: `base` int8 ≈ 300–400 MiB RSS plus Encoder-Spitze für das
+    # 30-s-Fenster (nicht live messbar, Schätzung). 700 MiB folgt der
+    # Empfehlung aus P0.T4 („≈ 700 MiB für Whisper") und lässt Reserve.
+    # P6.T4 bestätigt/verwirft den Wert per `docker stats` (E32).
+    mem_limit: 700m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  wyoming-piper:
+    # Altstack-Image `rhasspy/wyoming-piper` (Tag `latest` implizit; P0.T3).
+    image: rhasspy/wyoming-piper:latest
+
+    # Altstack-CMD laut P0.T3: `--voice de_DE-thorsten-high`.
+    command: ["--voice", "de_DE-thorsten-high"]
+
+    network_mode: host
+    # ⚠ Kein `container_name` — s. Begründung bei `wyoming-whisper`
+    #   (Alt-Container `wyoming-piper` bleibt für den Rollback erhalten).
+
+    # Daten-Bind laut P0.T3: `/home/akwa/wyoming-piper` → `/data`
+    # (9 Stimmen, de_DE-thorsten-high 22050 Hz S16_LE mono).
+    volumes:
+      - /home/akwa/wyoming-piper:/data
+
+    restart: unless-stopped
+
+    # ── Speicherlimit (E22) ──────────────────────────────────────────────
+    # P0.T3/P0.T4: live RSS 217 MiB bei 108,7 MiB Modell ⇒ Bedarf
+    # 120–217 MiB. 384 MiB lässt ~1,7× Luft für Synthese-Spitzen.
+    mem_limit: 384m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

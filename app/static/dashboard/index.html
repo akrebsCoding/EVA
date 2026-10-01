@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EVA · Dashboard</title>
+<!-- Lese-Dashboard: die Seite holt die GET-Routen der API (app/dashboard.py)
+     und schreibt ausschließlich über die **zwei** Schreib-Routen
+     `POST /api/config/oww-threshold` (E96) und `PUT /api/config` (E111) –
+     nie ein Gerät, nie ein HA-Call. Keine externen Ressourcen, kein CDN,
+     kein Build-Step – alles liegt lokal, damit das Dashboard auch im LAN
+     ohne Internet läuft. -->
+<link rel="stylesheet" href="/static/dashboard/style.css">
+<script src="/static/dashboard/app.js" defer></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-title">
+    <h1>EVA</h1>
+    <p class="subtitle">Nur-Lese-Dashboard · <span id="service-name">–</span>
+      <span class="sep">·</span> <span id="service-version">–</span></p>
+  </div>
+  <div class="topbar-controls">
+    <label class="toggle">
+      <input type="checkbox" id="auto-refresh" checked>
+      <span>Auto-Refresh</span>
+    </label>
+    <button type="button" id="refresh-now" class="ghost">Jetzt aktualisieren</button>
+    <p class="meta"><span id="poll-state">–</span> · <span id="last-update">–</span></p>
+  </div>
+</header>
+
+<main>
+
+  <!-- ══ 1 · Status ═══════════════════════════════════════════════════ -->
+  <section class="card" id="section-status" aria-labelledby="h-status">
+    <h2 id="h-status">Status</h2>
+    <div class="banner" id="status-banner" hidden></div>
+    <div class="tiles" id="status-tiles">
+      <div class="tile"><span class="tile-label">Dienst</span><span class="tile-value" id="t-service">–</span></div>
+      <div class="tile"><span class="tile-label">Version</span><span class="tile-value" id="t-version">–</span></div>
+      <div class="tile"><span class="tile-label">mDNS</span><span class="tile-value" id="t-mdns">–</span></div>
+      <div class="tile"><span class="tile-label">Geräte</span><span class="tile-value" id="t-devices">–</span></div>
+      <div class="tile"><span class="tile-label">Uptime</span><span class="tile-value" id="t-uptime">–</span></div>
+      <div class="tile"><span class="tile-label">API</span><span class="tile-value" id="t-health">–</span></div>
+    </div>
+
+    <h3>Geräte</h3>
+    <div class="table-wrap"><table class="grid" id="device-table">
+      <thead><tr><th>Gerät</th><th>Verbunden</th><th>Zustand</th><th>Verbunden seit</th></tr></thead>
+      <tbody id="device-rows"></tbody>
+    </table></div>
+
+    <h3>Abhängigkeiten</h3>
+    <div class="table-wrap"><table class="grid" id="dependency-table">
+      <thead><tr><th>Name</th><th>Status</th><th>Ziel</th><th>Latenz</th><th>Detail / Grund</th></tr></thead>
+      <tbody id="dependency-rows"></tbody>
+    </table></div>
+  </section>
+
+  <!-- ══ 2 · Workflow ══════════════════════════════════════════════════ -->
+  <section class="card" id="section-state" aria-labelledby="h-state">
+    <h2 id="h-state">Workflow</h2>
+    <div class="banner" id="state-banner" hidden></div>
+    <p class="hint">Zustandsmaschine <span id="graph-source">–</span> ·
+      aktueller Zustand je Gerät ist hervorgehoben.</p>
+    <ol class="states" id="state-list"></ol>
+    <p class="empty" id="state-empty" hidden>Für dieses Gerät meldet die Pipeline keinen Zustand.</p>
+  </section>
+
+  <!-- ══ 3 · Logs ═════════════════════════════════════════════════════ -->
+  <section class="card" id="section-logs" aria-labelledby="h-logs">
+    <h2 id="h-logs">Log-Stream</h2>
+    <div class="banner" id="logs-banner" hidden></div>
+    <form class="filters" id="log-filters" autocomplete="off">
+      <label>Level (kommagetrennt)
+        <input type="text" id="f-level" list="level-options" placeholder="alle" spellcheck="false"
+               aria-describedby="f-level-hint">
+        <datalist id="level-options">
+          <option value="DEBUG"></option><option value="INFO"></option>
+          <option value="WARNING"></option><option value="ERROR"></option>
+          <option value="CRITICAL"></option>
+        </datalist>
+      </label>
+      <label>Logger / Modul
+        <input type="text" id="f-logger" placeholder="z. B. pipeline" spellcheck="false">
+      </label>
+      <label>Limit
+        <input type="number" id="f-limit" value="100" min="1" max="1000" step="1">
+      </label>
+      <label>seit (s)
+        <input type="number" id="f-since" placeholder="leer = alle" min="1" step="1">
+      </label>
+    </form>
+    <p class="meta">Quelle: <span class="chip" id="logs-source">–</span>
+      <span id="logs-source-note"></span></p>
+    <div class="logbox" id="log-box">
+      <table class="grid logtable" id="log-table">
+        <thead><tr><th>Zeit</th><th>Level</th><th>Logger</th><th>Meldung</th></tr></thead>
+        <tbody id="log-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ══ 4 · Historie ══════════════════════════════════════════════════ -->
+  <!-- ══ 5 · Turn-Historie ════════════════════════════════════════════ -->
+  <section class="card" id="section-history" aria-labelledby="h-history">
+    <h2 id="h-history">Turn-Historie</h2>
+    <div class="banner" id="history-banner" hidden></div>
+    <p class="hint">Je Turn die Verteilung der Zeit auf die Phasen (P9.T0).
+      „Licht an" = Zeit vom Ende der Sprechphase bis zum fertigen HA-Call,
+      „ab Wake" = ab dem Wake-Wort. Ein <strong>–</strong> heißt
+      <strong>nicht gemessen</strong> (kein TTS, kein HA-Call oder Button-Turn),
+      nicht „0 Sekunden".</p>
+    <div class="table-wrap" id="history-wrap" hidden><table class="grid" id="history-table">
+      <thead><tr>
+        <th>Zeit</th><th>Gerät</th><th>Zustand</th><th>Intent</th><th>Outcome</th>
+        <th>Dauer</th><th>Score</th><th>Confidence</th><th>Service</th><th>Domain</th>
+        <th>Licht an</th><th>ab Wake</th><th>STT</th><th>Routing</th>
+        <th>TTS 1. Audio</th><th>TTS gesamt</th>
+      </tr></thead>
+      <tbody id="history-rows"></tbody>
+    </table></div>
+    <p class="empty" id="history-empty" hidden>Historie noch nicht erfasst.</p>
+  </section>
+
+  <!-- ══ 5b · Latenz (P9.T0) ═══════════════════════════════════════════ -->
+  <section class="card" id="section-latency" aria-labelledby="h-latency">
+    <h2 id="h-latency">Latenz (letzte Turns)</h2>
+    <div class="banner" id="latency-banner" hidden></div>
+    <p class="hint">Mittelwert/Median/Maximum der Phasen-Dauern aus der
+      Turn-Historie. Werte aus älteren Buffern ohne Phasen-Felder zählen nicht
+      mit – sonst würde eine „Verbesserung" nur durch neuere Turns entstehen.</p>
+    <div class="tiles" id="latency-tiles">
+      <div class="tile"><span class="tile-label">Licht an (Median)</span><span class="tile-value" id="t-lat-speech">–</span></div>
+      <div class="tile"><span class="tile-label">ab Wake (Median)</span><span class="tile-value" id="t-lat-wake">–</span></div>
+      <div class="tile"><span class="tile-label">STT (Median)</span><span class="tile-value" id="t-lat-stt">–</span></div>
+      <div class="tile"><span class="tile-label">Routing (Median)</span><span class="tile-value" id="t-lat-route">–</span></div>
+      <div class="tile"><span class="tile-label">TTS 1. Audio (Median)</span><span class="tile-value" id="t-lat-tts1">–</span></div>
+      <div class="tile"><span class="tile-label">TTS gesamt (Median)</span><span class="tile-value" id="t-lat-ttstotal">–</span></div>
+    </div>
+    <p class="empty" id="latency-empty" hidden>Noch kein Turn mit gemessenen Phasen.</p>
+  </section>
+
+  <!-- ══ 5c · Wake-Wort (P9.T0) ════════════════════════════════════════ -->
+  <section class="card" id="section-wake" aria-labelledby="h-wake">
+    <h2 id="h-wake">Wake-Wort</h2>
+    <div class="banner" id="wake-banner" hidden></div>
+    <p class="hint">Jeder bewertete Mikrofon-Chunk ist ein Versuch. <strong>Abgelehnt</strong> heißt:
+      Warm-up-Gate, Cooldown oder Score unter der wirksamen Schwelle. Der Ring zeigt nur die
+      jüngsten Versuche <em>über</em> dem Speicher-Boden (Standard <span id="wake-floor-note">–</span>);
+      darunter liegende Versuche werden <strong>nicht gespeichert</strong>, sondern nur als Zähler
+      aggregiert. Der <code>INFO</code>-Log hat einen eigenen, höheren Boden und ist deshalb
+      ebenfalls kein vollständiges Protokoll: sichtbarer Einzelbeleg ist der Ring, der
+      Zählerstand die Summe darüber.</p>
+    <div class="tiles" id="wake-tiles">
+      <div class="tile"><span class="tile-label">Schwelle (wirksam)</span><span class="tile-value" id="t-wake-threshold">–</span></div>
+      <div class="tile"><span class="tile-label">Versuche</span><span class="tile-value" id="t-wake-count">–</span></div>
+      <div class="tile"><span class="tile-label">Angenommen</span><span class="tile-value" id="t-wake-accepted">–</span></div>
+      <div class="tile"><span class="tile-label">Abgelehnt</span><span class="tile-value" id="t-wake-rejected">–</span></div>
+      <div class="tile"><span class="tile-label">Bester abgelehnter Score</span><span class="tile-value" id="t-wake-best">–</span></div>
+      <div class="tile"><span class="tile-label">Score (min/Ø/max)</span><span class="tile-value" id="t-wake-scores">–</span></div>
+    </div>
+    <p class="meta">Herkunft der Schwelle: <span class="chip" id="wake-threshold-source">–</span>
+      <span id="wake-window-note"></span></p>
+
+    <!-- Schreibmodus (E96). Solange DASHBOARD_WRITE_ENABLED=false, bleibt das
+         Formular unsichtbar: die Route existiert, verweigert aber jeden
+         Schreibversuch mit 403. Es wird NIE ein Gerät geschaltet. -->
+    <div class="tuner" id="wake-tuner" hidden>
+      <p class="tuner-head">Schwelle anpassen <span class="chip" id="wake-write-state">–</span></p>
+      <form id="wake-tune-form" autocomplete="off">
+        <label class="tuner-label" for="wake-threshold-input">Neue Schwelle
+          <span class="tuner-range" id="wake-threshold-range">–</span></span>
+        <input type="number" id="wake-threshold-input" name="threshold" min="0.01" max="1"
+               step="0.01" inputmode="decimal" required>
+        <input type="range" id="wake-threshold-slider" min="0.01" max="1" step="0.01"
+               aria-label="Neue Wake-Schwelle">
+        <div class="tuner-actions">
+          <button type="submit" id="wake-tune-save">Speichern</button>
+          <button type="button" id="wake-tune-reset" class="ghost">Auf 0,80 zurücksetzen</button>
+        </div>
+      </form>
+      <p class="tuner-note" id="wake-tune-note"></p>
+    </div>
+
+    <div class="table-wrap" id="wake-wrap" hidden><table class="grid" id="wake-table">
+      <thead><tr>
+        <th>Zeit</th><th>Gerät</th><th>Chunk</th><th>Score</th><th>Schwelle</th><th>Entscheidung</th>
+      </tr></thead>
+      <tbody id="wake-rows"></tbody>
+    </table></div>
+    <p class="empty" id="wake-empty" hidden>Noch kein bewerteter Mikrofon-Chunk.</p>
+  </section>
+
+  <!-- ══ 5 · Konfiguration ═════════════════════════════════════════════ -->
+  <section class="card" id="section-config" aria-labelledby="h-config">
+    <h2 id="h-config">Konfiguration</h2>
+    <div class="banner" id="config-banner" hidden></div>
+    <p class="hint">Read-Export der Settings. Geheimnisse werden von der API
+      grundsätzlich nicht ausgegeben (Allowlist). Der Schreibblock ändert nur
+      die elf E111-Felder über <code>PUT /api/config</code> – er schaltet
+      <strong>nie</strong> ein Gerät und ruft Home Assistant <strong>nie</strong> auf.
+      Ein leeres Zahlenfeld heißt „unverändert" (es wird nicht gesendet).</p>
+
+    <!-- Schreibblock (E111). Gespeichert wird nur, was sich geändert hat.
+         Das Token-Feld ist unsichtbar, solange der Server keinen
+         API-Token verlangt (`write_token_required` aus /api/config). -->
+    <div class="config-editor" id="config-editor">
+      <p class="tuner-head">Einstellungen ändern
+        <span class="chip" id="config-write-state">–</span></p>
+      <form id="config-form" autocomplete="off">
+        <div class="config-grid">
+          <label class="config-field">OWW-Schwelle
+            <span class="chip" id="badge-oww_threshold">–</span>
+            <input type="number" id="cfg-oww_threshold" min="0.01" max="1" step="0.01" inputmode="decimal">
+          </label>
+          <label class="config-field">OWW-Barge-in-Schwelle
+            <span class="chip" id="badge-oww_barge_in_threshold">–</span>
+            <input type="number" id="cfg-oww_barge_in_threshold" min="0.01" max="1" step="0.01" inputmode="decimal">
+          </label>
+          <label class="config-field">Wake-Speicher-Boden
+            <span class="chip" id="badge-wake_attempt_keep_floor">–</span>
+            <input type="number" id="cfg-wake_attempt_keep_floor" min="0" max="0.99" step="0.01" inputmode="decimal">
+          </label>
+          <label class="config-field">Router-Konfidenz-Gate
+            <span class="chip" id="badge-router_confidence_gate">–</span>
+            <input type="number" id="cfg-router_confidence_gate" min="0" max="1" step="0.01" inputmode="decimal">
+          </label>
+          <label class="config-field">Router-Parameter-Schwelle
+            <span class="chip" id="badge-router_needs_param_threshold">–</span>
+            <input type="number" id="cfg-router_needs_param_threshold" min="0" max="1" step="0.01" inputmode="decimal">
+          </label>
+          <label class="config-field">OWW-Cooldown (ms)
+            <span class="chip" id="badge-oww_cooldown_ms">–</span>
+            <input type="number" id="cfg-oww_cooldown_ms" min="0" step="1" inputmode="numeric">
+          </label>
+          <label class="config-field">Log-Level
+            <span class="chip" id="badge-log_level">–</span>
+            <select id="cfg-log_level">
+              <option value="DEBUG">DEBUG</option>
+              <option value="INFO" selected>INFO</option>
+              <option value="WARNING">WARNING</option>
+              <option value="ERROR">ERROR</option>
+            </select>
+          </label>
+          <label class="config-field">Audio-Dump
+            <span class="chip" id="badge-audio_dump_enabled">–</span>
+            <input type="checkbox" id="cfg-audio_dump_enabled">
+          </label>
+          <label class="config-field">Whisper-Sprache (ISO-639-1, z. B. <code>de</code>)
+            <span class="chip" id="badge-whisper_language">–</span>
+            <input type="text" id="cfg-whisper_language" placeholder="de" spellcheck="false">
+          </label>
+          <label class="config-field">Jev-Modus
+            <span class="chip" id="badge-jev_mode">–</span>
+            <select id="cfg-jev_mode">
+              <option value="intent">intent</option>
+              <option value="gate" selected>gate</option>
+              <option value="off">off</option>
+            </select>
+          </label>
+          <label class="config-field">HA-Entity-Domains (CSV, z. B. <code>light,switch,cover</code>)
+            <span class="chip" id="badge-ha_entity_domains">–</span>
+            <input type="text" id="cfg-ha_entity_domains" placeholder="light,switch,cover" spellcheck="false">
+          </label>
+        </div>
+        <!-- Sichtbar nur, wenn der Server einen API-Token verlangt
+             (write_token_required: true aus /api/config). -->
+        <label class="config-field config-token" id="cfg-token-field" hidden>
+          API-Token (dient nur der Autorisierung, wird nicht gespeichert)
+          <input type="password" id="cfg-api-token" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="tuner-actions">
+          <button type="submit" id="config-save">Speichern</button>
+        </div>
+      </form>
+      <p class="tuner-note" id="config-note"></p>
+      <p class="tuner-note">Felder mit „Neustart" wirken erst, nachdem der
+        Manager neu gestartet wurde (<code>docker compose up -d
+        wyoming-manager</code> auf dem Host).</p>
+    </div>
+
+    <h3>Alle Settings (Read-Export)</h3>
+    <div class="table-wrap"><table class="grid" id="config-table">
+      <thead><tr><th>Feld</th><th>Wert</th><th>Gruppe</th><th>Herkunft</th></tr></thead>
+      <tbody id="config-rows"></tbody>
+    </table></div>
+  </section>
+
+</main>
+
+<footer>
+  <p>Lese-Dashboard · kontrollierte Schreibwege (2 Routen) · kein Schalten von Geräten · Quelle: <code>/api/*</code> (app/dashboard.py)</p>
+</footer>
+
+</body>
+</html>

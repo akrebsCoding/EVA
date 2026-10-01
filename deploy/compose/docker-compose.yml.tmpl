@@ -1,0 +1,165 @@
+# EVA – Compose-Template (P10.T1; gerendert durch deploy/install.sh)
+#
+# Platzhalter (@VAR@) werden vom Installer ersetzt; Werte siehe unten.
+# E102 (Topologie): Standard EIN Host — Manager + Whisper + Piper auf
+# derselben Maschine im host-Netz (Pflicht: der Dot findet den Manager
+# nur per mDNS und im Bridge-Netz verlässt das Announcement das eigene
+# Subnetz nicht, E93/P6.T4). Bei verteilter Wahl (T2) rendert der
+# Installer Whisper/Piper NICHT mit (oder als zweites Projekt mit
+# Port-Publish) und setzt WHISPER_HOST/PIPER_HOST in der `.env` auf die
+# zweite Host-IP — dieselbe Vorlage, anderer Render.
+#
+# KEINE SECRETS hier: ausschließlich `env_file: .env`. `environment:`
+# enthält nur das Interpolations-Muster `${DASHBOARD_WRITE_ENABLED:-false}`,
+# damit ein expliziter `.env`-Wert gewinnt und nicht still totgeschlagen
+# wird (Vorrang-Falle P9.T7).
+#
+# Platzhalter (vom Installer belegt, single-host-Werte):
+#   @REPO_ROOT@        Build-Kontext des Managers (Repo-Wurzel mit Dockerfile)
+#   @DATA_DIR@         Daten-Verzeichnis (Whisper-/Piper-HF-Cache, dauerhaft)
+#   @TZ@               Zeitzone
+#   @MANAGER_MEM_LIMIT@ 512m (Live-Wert, E22)
+#   @WHISPER_MODEL@    small (E104-Default, E97)
+#   @WHISPER_COMPUTE_TYPE@ int8 (zwingend: ohne Schalter float32 = 2501 MB)
+#   @WHISPER_MEM_LIMIT@ 3g (harte Leckschranke)
+#   @PIPER_VOICE@      de_DE-thorsten-high
+#   @PIPER_MEM_LIMIT@  1g
+#   @WHISPER_PUBLISH@  Port-Publish-Zeile (nur verteilte Topologie, sonst Kommentar)
+#   @PIPER_PUBLISH@    dito
+
+services:
+  wyoming-manager:
+    build:
+      context: @REPO_ROOT@
+      dockerfile: Dockerfile
+    image: eva-manager:latest
+    container_name: eva-manager
+    # Host-Netz ist PFLICHT (mDNS `_emcontroller._tcp.local` + direkter
+    # WS-Dial des Dots auf :8767; ein `ports:`-Block wäre wirkungslos).
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      TZ: @TZ@
+      DASHBOARD_WRITE_ENABLED: ${DASHBOARD_WRITE_ENABLED:-false}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: @MANAGER_MEM_LIMIT@
+    # 3-stufiger Check (P5.T4/E33): PID1 = Manager · Listener auf
+    # MANAGER_PORT · /health 200. Kein curl im Image ⇒ stdlib-Python.
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - |
+          import os, socket, sys, urllib.request
+          try:
+              with open("/proc/1/cmdline", "rb") as fh:
+                  cmdline = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+          except OSError:
+              cmdline = ""
+          if "app.main" not in cmdline and "app/main.py" not in cmdline:
+              sys.exit(1)
+          port = int(os.environ.get("MANAGER_PORT", "8767"))
+          try:
+              socket.create_connection(("127.0.0.1", port), timeout=2.0).close()
+          except OSError:
+              sys.exit(1)
+          try:
+              with urllib.request.urlopen(
+                  "http://127.0.0.1:%d/health" % port, timeout=2.0
+              ) as resp:
+                  sys.exit(0 if resp.status == 200 else 1)
+          except Exception:
+              sys.exit(1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
+
+  wyoming-whisper:
+    image: rhasspy/wyoming-whisper:latest
+    container_name: eva-whisper
+    # single-host: host-Netz, Manager spricht 127.0.0.1:10300.
+    # verteilt:    bridge + Port-Publish (@WHISPER_PUBLISH@).
+    network_mode: host
+@WHISPER_PUBLISH@
+    # E104-Default `small`+int8 (E97-Messung: 2,47 s / 4 von 8 gegenüber
+    # base 2,84 s / 1 von 8; medium verworfen). --initial-prompt mit dem
+    # kuratierten HA-Vokabular (E99/E104, deploy/initial-prompt.txt) —
+    # bei anderer HA-Instanz neu kuratieren (Inventur §2.2).
+    command:
+      - --model
+      - @WHISPER_MODEL@
+      - --language
+      - ${WHISPER_LANGUAGE:-de}
+      - --compute-type
+      - @WHISPER_COMPUTE_TYPE@
+      - --initial-prompt
+      - @INITIAL_PROMPT@
+    volumes:
+      - @DATA_DIR@/whisper:/data
+    restart: unless-stopped
+    mem_limit: @WHISPER_MEM_LIMIT@
+    # TCP-Check: Wyoming-Port muss antworten (kein curl im Image).
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - |
+          import socket, sys
+          try:
+              socket.create_connection(("127.0.0.1", 10300), timeout=2.0).close()
+          except OSError:
+              sys.exit(1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  wyoming-piper:
+    image: rhasspy/wyoming-piper:latest
+    container_name: eva-piper
+    network_mode: host
+@PIPER_PUBLISH@
+    command:
+      - --voice
+      - @PIPER_VOICE@
+    volumes:
+      - @DATA_DIR@/piper:/data
+    restart: unless-stopped
+    mem_limit: @PIPER_MEM_LIMIT@
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - |
+          import socket, sys
+          try:
+              socket.create_connection(("127.0.0.1", 10200), timeout=2.0).close()
+          except OSError:
+              sys.exit(1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

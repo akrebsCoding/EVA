@@ -1,0 +1,322 @@
+/* EVA-Dashboard (P8.D2) – dunkles, schlichtes Theme.
+ *
+ * Bewusst ohne Framework, ohne Web-Fonts und ohne CDN: nur lokale Assets, damit
+ * die Oberfläche im LAN ohne Internet funktioniert. Systemschrift-Stack.
+ */
+
+:root {
+  --bg: #12151a;
+  --bg-soft: #171b22;
+  --card: #1c212a;
+  --line: #2a313d;
+  --text: #dde3ec;
+  --text-dim: #97a3b4;
+  --accent: #5aa9e6;
+  --ok: #58c98a;
+  --warn: #e0b341;
+  --warn-bg: #2a2417;
+  --bad: #e26d6d;
+  --unknown: #8b93a1;
+  --radius: 8px;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ── Kopfzeile ──────────────────────────────────────────────────────── */
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.topbar h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
+.subtitle { margin: 2px 0 0; color: var(--text-dim); font-size: 13px; }
+.sep { opacity: .5; }
+
+.topbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+
+.ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+.meta { margin: 0; color: var(--text-dim); font-size: 12px; }
+
+/* ── Layout ─────────────────────────────────────────────────────────── */
+main {
+  display: grid;
+  gap: 16px;
+  padding: 16px 20px 8px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px 18px;
+}
+
+.card h2 { margin: 0 0 12px; font-size: 16px; }
+.card h3 { margin: 20px 0 8px; font-size: 13px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .6px; }
+
+.hint { margin: 0 0 12px; color: var(--text-dim); font-size: 13px; }
+.empty { margin: 8px 0 0; color: var(--text-dim); font-style: italic; }
+
+/* ── Hinweisleiste (degraded) – warnend, nicht rot ──────────────────── */
+.banner {
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+  color: #f0d9a0;
+  font-size: 13px;
+}
+
+.banner ul { margin: 6px 0 0; padding-left: 18px; }
+
+/* ── Kacheln ────────────────────────────────────────────────────────── */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  min-height: 64px;            /* feste Höhe ⇒ kein Layout-Shift beim Pollen */
+  justify-content: center;
+}
+
+.tile-label { color: var(--text-dim); font-size: 12px; }
+.tile-value { font-size: 16px; font-family: var(--mono); word-break: break-all; }
+
+/* ── Tabellen ───────────────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; min-height: 44px; }
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.grid th, .grid td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.grid th { color: var(--text-dim); font-weight: 600; white-space: nowrap; }
+.grid td { font-family: var(--mono); word-break: break-word; }
+.grid tbody tr:last-child td { border-bottom: 0; }
+
+/* ── Zustände ───────────────────────────────────────────────────────── */
+.states { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+
+.state {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) 1fr auto;
+  gap: 10px;
+  align-items: center;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  min-height: 52px;            /* verhindert Springen beim Zustandswechsel */
+}
+
+.state.is-current { border-left-color: var(--accent); background: #1a2430; }
+.state-label { font-weight: 600; }
+.state-key { color: var(--text-dim); font-family: var(--mono); font-size: 12px; }
+.state-next { color: var(--text-dim); font-size: 12px; font-family: var(--mono); }
+.state-current { color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; }
+
+/* ── Filter ─────────────────────────────────────────────────────────── */
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+  align-items: end;
+}
+
+.filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
+
+.filters input, .filters select {
+  background: var(--bg-soft);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.filters input:focus, .filters select:focus, .ghost:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ── Logs ───────────────────────────────────────────────────────────── */
+.logbox {
+  /* Feste Höhe: die Zeilenzahl schwankt beim Pollen, der Rahmen nicht. */
+  min-height: 220px;
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.logtable td:first-child { white-space: nowrap; color: var(--text-dim); }
+.logtable td:last-child { white-space: pre-wrap; }
+
+.level { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.level-DEBUG { background: #2b3038; color: #a9b4c2; }
+.level-INFO { background: #1d3346; color: #7cc0f0; }
+.level-WARNING { background: #3a3016; color: #e5c163; }
+.level-ERROR, .level-CRITICAL { background: #3d2222; color: #ef8b8b; }
+.level-UNKNOWN { background: #2b3038; color: var(--unknown); }
+
+/* ── Marker ─────────────────────────────────────────────────────────── */
+.chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+.chip-ok { color: var(--ok); border-color: var(--ok); }
+.chip-bad { color: var(--bad); border-color: var(--bad); }
+.chip-warn { color: var(--warn); border-color: var(--warn); }
+/* `null`/unbekannt ist neutral – weder grün (erfolgreich) noch rot (Fehler). */
+.chip-unknown { color: var(--unknown); border-color: var(--unknown); }
+.chip-unreachable { color: var(--bad); border-color: var(--bad); }
+
+/* ── Schwellen-Tuner (E96) ───────────────────────────────────────────────
+ * Absichtlich schmal und zurückhaltend: er verändert genau eine Zahl und
+ * schaltet **nie** ein Gerät. Versteckt geliefert (`[hidden]`), sichtbar erst
+ * wenn der Server `write_enabled: true` bestätigt. */
+.tuner {
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-soft, rgba(127, 127, 127, 0.06));
+}
+.tuner[hidden] { display: none; }
+.tuner-head { margin: 0 0 8px; font-weight: 600; display: flex; gap: 8px; align-items: center; }
+.tuner-label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+.tuner-range { font-family: var(--mono); }
+.tuner form { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.tuner input[type="number"] {
+  width: 8ch;
+  padding: 6px 8px;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.tuner input[type="range"] { flex: 1 1 160px; min-width: 140px; accent-color: var(--accent); }
+.tuner-actions { display: flex; gap: 8px; }
+.tuner-actions button { padding: 6px 12px; font-size: 13px; }
+.tuner-actions .ghost { background: transparent; color: var(--text-dim); }
+.tuner-actions .ghost:hover { border-color: var(--accent); color: var(--accent); }
+.tuner input:disabled, .tuner button:disabled { opacity: 0.5; cursor: not-allowed; }
+.tuner-note { margin: 8px 0 0; font-size: 12px; color: var(--text-dim); }
+.tuner-note.bad { color: var(--bad); }
+.tuner-note.good { color: var(--ok); }
+
+/* ── E111-Schreibblock (Konfiguration) ──────────────────────────────────
+ * Gleiche Disziplin wie der Tuner: lokales Theme, keine Frameworks. Die
+ * Felder stehen in einer umbruchsfesten Gitter, die Badges sind Chips. */
+.config-editor {
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-soft);
+}
+.config-editor[hidden] { display: none; }
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.config-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.config-field .chip { align-self: flex-start; }
+.config-field input, .config-field select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+}
+.config-field input[type="checkbox"] { width: 16px; height: 16px; padding: 0; }
+.config-field input:focus, .config-field select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.config-token { margin-bottom: 10px; }
+.config-token[hidden] { display: none; }
+.config-editor button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+footer { padding: 8px 20px 20px; max-width: 1180px; margin: 0 auto; }
+footer p { color: var(--text-dim); font-size: 12px; margin: 0; }
+code { font-family: var(--mono); color: var(--text-dim); }
+
+/* ── Schmale Fenster (Telefon) ──────────────────────────────────────── */
+@media (max-width: 640px) {
+  .topbar { padding: 12px 14px; }
+  main { padding: 12px 14px 4px; }
+  .card { padding: 14px; }
+  .state { grid-template-columns: 1fr; gap: 4px; }
+  .state-current { white-space: normal; }
+}
+
+/* ── Bewegung nur, wenn gewünscht ───────────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  .ghost, .filters input, .filters select, .state { transition: border-color .15s ease, color .15s ease; }
+}

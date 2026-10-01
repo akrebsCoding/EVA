@@ -1,0 +1,61 @@
+# ── Secrets / Umgebung (PLAN §2.3, §4; `.env` gehört NIE in Git) ─────
+.env
+.env.local
+.env.*.local
+.env.test
+.env.*.prod
+!.env.example
+# `.env.test` ist reine Platzhalter-Testkonfiguration (P9.T0, keine Secrets)
+# und wird für die Reproduzierbarkeit des Testsystems getrackt (HA-Entscheidung).
+!.env.test
+
+# ── Referenz-Quelltext des Alt-Controllers (P0.T6, git-ignoriert) ───
+docs/reference/
+
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.python-version
+
+# ── Tests / Tooling ─────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+reports/
+.mlcache/
+
+# ── Audio / temporäre Artefakte ─────────────────────────────────────
+*.wav.tmp
+*.raw.tmp
+*.pcm.tmp
+*.onnx.tmp
+.tmp/
+
+# ── Logs ────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Betriebssystem / Editor ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Lokale Notizen mit Zugangsdaten (WLAN-Passwort) – NIE committen
+# (nur die Root-Datei; deploy/docs/WLAN_CONNECT.md enthält keine Creds)
+/WLAN_CONNECT.md

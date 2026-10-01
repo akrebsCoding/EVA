@@ -1,0 +1,43 @@
+# wyoming-manager – Runtime-Dependencies
+# Quelle: PLAN.md §4 (Dependency-Tabelle), verifiziert im Image in P1.T5.
+# Ziel-Image: python:3.11-slim (P1.T2) + apt: libsoxr0, libspeex1, netcat-openbsd.
+#
+# ── WICHTIG: openwakeword braucht --no-deps ────────────────────────────────
+#   openwakeword zieht sonst tflite-runtime nach (kein Py3.12-x86_64-Build,
+#   PLAN §2.4/§4). Deshalb NICHT blind `pip install -r requirements.txt` in eine
+#   Umgebung, in der tflite unerwünscht ist. Die verifizierte Reihenfolge aus
+#   P1.T5 lautet:
+#
+#   pip install onnxruntime "openwakeword==0.6.*" --no-deps speexdsp-ns==0.1.2
+#
+#   Das Dockerfile (P1.T2) muss openwakeword entsprechend mit --no-deps
+#   installieren; speexdsp-ns wird von openwakeword nur für
+#   enable_speex_noise_suppression gebraucht (OWW_SPEEX_NS=true).
+# ───────────────────────────────────────────────────────────────────────────
+
+# ── Server ────────────────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+websockets
+
+# ── HTTP-Clients: Home Assistant + LLM-Gateway (openai-kompatibel) ───────
+httpx
+
+# ── Config (app/config.py) ────────────────────────────────────────────────
+pydantic-settings
+
+# ── Audio / Math ─────────────────────────────────────────────────────────
+numpy                 # Referenz-Container: 2.4.4 (PLAN §2.4)
+scipy                 # PLAN §4: "scipy 1.18.x" (Referenz: 1.18.1)
+soxr                  # Resampling Piper→48 kHz; apt-Paket libsoxr0
+
+# ── mDNS (_emcontroller._tcp.local, P5.T3) ───────────────────────────────
+zeroconf
+
+# ── Wake-Wort (E5) ───────────────────────────────────────────────────────
+onnxruntime           # CPU-Build; KEIN tflite-runtime (kein Py3.12-x86_64-Build)
+openwakeword>=0.6,<0.7  # 0.6.x, Installation MIT --no-deps (siehe Kopf)
+speexdsp-ns==0.1.2    # Speex-NS für enable_speex_noise_suppression; apt libspeex1
+
+# ── Nicht per pip, sondern apt (P1.T2) ───────────────────────────────────
+# libsoxr0, libspeex1, netcat-openbsd
